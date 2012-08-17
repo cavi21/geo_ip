@@ -1,5 +1,5 @@
 require 'json'
-require 'rest-client'
+require 'typhoeus'
 
 class GeoIp
   SERVICE_URL = 'http://api.ipinfodb.com/v3/ip-'
@@ -61,10 +61,23 @@ class GeoIp
     #   GeoIp.geolocation('209.85.227.104', {:precision => :city, :timezone => true})
     def geolocation ip, options={}
       location = nil
-      Timeout.timeout(self.fallback_timeout) do
-        parsed_response = JSON.parse RestClient::Request.execute(:method => :get, :url => lookup_url(ip, options), :timeout => self.timeout)
+      request = Typhoeus::Request.new(lookup_url(ip, options),
+                                      :method => :get,
+                                      :timeout => self.timeout, # miliseconds
+                                      :cache_timeout => 60) # seconds
+      request.on_complete do |response|
+        if response.success?
+          parsed_response = JSON.parse response.body
+        elsif response.timed_out?
+          parsed_response = Hash["latitude"=>"-", "statusMessage"=>"Timeout", "cityName"=>"-", "regionName"=>"-", "ipAddress"=>"-", "timeZone"=>"-", "zipCode"=>"-", "countryCode"=>"-", "countryName"=>"-", "longitude"=>"-", "statusCode"=>"ERROR"]
+        else
+          parsed_response = Hash["latitude"=>"-", "statusMessage"=>"Unknown Error", "cityName"=>"-", "regionName"=>"-", "ipAddress"=>"-", "timeZone"=>"-", "zipCode"=>"-", "countryCode"=>"-", "countryName"=>"-", "longitude"=>"-", "statusCode"=>"ERROR"]
+        end
         location = convert_keys(parsed_response, options)
       end
+      hydra = Typhoeus::Hydra.new
+      hydra.queue(request)
+      hydra.run
 
       location
     end
